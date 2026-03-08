@@ -39,11 +39,25 @@ jobs:
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug --stacktrace
+        id: build
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle :app:assembleDebug --stacktrace --info 2>&1 | tee gradle-build.log
+
+      - name: Upload Gradle build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: android/gradle-build.log
+          if-no-files-found: warn
 
       - name: Upload APK artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: codex-bridge-app-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
