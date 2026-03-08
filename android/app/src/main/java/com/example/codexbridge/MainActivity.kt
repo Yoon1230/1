@@ -224,7 +224,7 @@ private fun TaskPanel(
     LazyColumn(
         modifier = Modifier
             .fillMaxWidth()
-            .weight(1f)
+            .height(280.dp)
             .background(Color(0xFF101418), RoundedCornerShape(8.dp))
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
