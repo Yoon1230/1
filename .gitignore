@@ -1,0 +1,22 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.db
+.venv/
+venv/
+
+# Bridge runtime
+server/bridge.db
+
+# Android / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+
+# IDE
+.vscode/
+.idea/
+*.iml
