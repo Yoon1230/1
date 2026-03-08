@@ -1,28 +1,58 @@
 ﻿import os
+import re
 import subprocess
 import threading
 from datetime import datetime
 
 
+_SESSION_ID_RE = re.compile(r"^session id:\s*([0-9a-fA-F-]{8,})$")
+
+
 class TaskRunner:
-    def __init__(self, db, command_template: str, default_workdir: str = ""):
+    def __init__(
+        self,
+        db,
+        command_template: str,
+        resume_command_template: str,
+        default_workdir: str = "",
+    ):
         self.db = db
         self.command_template = command_template
+        self.resume_command_template = resume_command_template
         self.default_workdir = default_workdir
         self.running_processes = {}
         self._lock = threading.Lock()
 
-    def _render_command(self, prompt: str) -> str:
-        safe_prompt = prompt.replace("\"", "\\\"").replace("\n", " ")
+    def _render_command(self, prompt: str, session_id: str | None = None) -> str:
+        safe_prompt = prompt.replace('"', '\\"').replace("\n", " ")
+
+        if session_id:
+            safe_session = session_id.replace('"', "").strip()
+            template = self.resume_command_template
+            if "{session_id}" not in template:
+                template = f"{template} {{session_id}}"
+            if "{prompt}" not in template:
+                template = f"{template} {{prompt}}"
+            return (
+                template.replace("{session_id}", safe_session)
+                .replace("{prompt}", f'"{safe_prompt}"')
+            )
+
         template = self.command_template
         if "{prompt}" not in template:
             template = f"{template} {{prompt}}"
-        return template.replace("{prompt}", f"\"{safe_prompt}\"")
+        return template.replace("{prompt}", f'"{safe_prompt}"')
 
-    def submit(self, task_id: str, prompt: str, cwd: str | None = None):
+    def submit(
+        self,
+        task_id: str,
+        prompt: str,
+        cwd: str | None = None,
+        session_id: str | None = None,
+    ):
         thread = threading.Thread(
             target=self._run_task,
-            args=(task_id, prompt, cwd),
+            args=(task_id, prompt, cwd, session_id),
             daemon=True,
         )
         thread.start()
@@ -38,11 +68,17 @@ class TaskRunner:
             except Exception:
                 return False
 
-    def _run_task(self, task_id: str, prompt: str, cwd: str | None = None):
+    def _run_task(
+        self,
+        task_id: str,
+        prompt: str,
+        cwd: str | None = None,
+        session_id: str | None = None,
+    ):
         start_time = datetime.utcnow().isoformat()
         self.db.update_task_status(task_id, "running", started_at=start_time)
 
-        command = self._render_command(prompt)
+        command = self._render_command(prompt, session_id=session_id)
         run_dir = cwd or self.default_workdir or None
 
         if run_dir and not os.path.isdir(run_dir):
@@ -76,11 +112,19 @@ class TaskRunner:
             with self._lock:
                 self.running_processes[task_id] = proc
 
+            discovered_session = False
             if proc.stdout is not None:
                 for line in iter(proc.stdout.readline, ""):
                     text = line.rstrip("\r\n")
-                    if text:
-                        self.db.append_log(task_id, text)
+                    if not text:
+                        continue
+                    self.db.append_log(task_id, text)
+
+                    if not discovered_session:
+                        matched = _SESSION_ID_RE.match(text.strip())
+                        if matched:
+                            self.db.set_task_session_id(task_id, matched.group(1))
+                            discovered_session = True
 
             proc.wait()
             code = int(proc.returncode or 0)

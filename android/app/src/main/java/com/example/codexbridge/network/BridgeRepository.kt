@@ -51,5 +51,30 @@ class BridgeRepository {
     suspend fun cancelTask(token: String, taskId: String) =
         api.cancelTask(authorization = bearer(token), taskId = taskId)
 
+    suspend fun newChat(token: String) =
+        api.newChat(authorization = bearer(token))
+
+    suspend fun sendChatMessage(
+        token: String,
+        message: String,
+        cwd: String?,
+        conversationId: String?,
+    ) =
+        api.sendChatMessage(
+            authorization = bearer(token),
+            request = ChatSendRequest(
+                message = message,
+                cwd = cwd,
+                conversationId = conversationId,
+            ),
+        )
+
+    suspend fun getChatMessages(token: String, conversationId: String, limit: Int = 100) =
+        api.getChatMessages(
+            authorization = bearer(token),
+            conversationId = conversationId,
+            limit = limit,
+        )
+
     private fun bearer(token: String): String = "Bearer $token"
 }

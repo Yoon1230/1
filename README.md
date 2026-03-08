@@ -20,6 +20,7 @@ Architecture:
 - `BRIDGE_HOST`: default `0.0.0.0`
 - `BRIDGE_PORT`: default `8765`
 - `CODEX_COMMAND_TEMPLATE`: default `codex exec {prompt}`
+- `CODEX_RESUME_COMMAND_TEMPLATE`: default `codex exec resume --skip-git-repo-check --full-auto {session_id} {prompt}`
 - `BRIDGE_DEFAULT_WORKDIR`: optional default working directory.
 
 ### Run
@@ -39,10 +40,15 @@ Import `android/` into Android Studio.
 In app login page, set bridge URL like:
 - `http://<your-pc-lan-ip>:8765/`
 
-Then login with `BRIDGE_PASSWORD` and submit tasks.
+Then login with `BRIDGE_PASSWORD` and start chatting.
 
 ## API summary
 - `POST /api/auth/login`
+- `POST /api/chat/new`
+- `POST /api/chat/send`
+- `GET /api/chat/messages?conversation_id=...`
+
+Compatible legacy task APIs are still available:
 - `GET /api/tasks`
 - `POST /api/tasks`
 - `GET /api/tasks/{id}`

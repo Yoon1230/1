@@ -14,6 +14,10 @@ class Settings:
         "CODEX_COMMAND_TEMPLATE",
         "codex exec {prompt}",
     )
+    CODEX_RESUME_COMMAND_TEMPLATE = os.getenv(
+        "CODEX_RESUME_COMMAND_TEMPLATE",
+        "codex exec resume --skip-git-repo-check --full-auto {session_id} {prompt}",
+    )
     DEFAULT_WORKDIR = os.getenv("BRIDGE_DEFAULT_WORKDIR", "")
 
     TOKEN_MAX_AGE_SECONDS = int(os.getenv("BRIDGE_TOKEN_MAX_AGE_SECONDS", "604800"))

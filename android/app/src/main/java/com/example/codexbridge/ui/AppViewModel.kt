@@ -3,8 +3,7 @@
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.codexbridge.network.BridgeRepository
-import com.example.codexbridge.network.LogItem
-import com.example.codexbridge.network.TaskDto
+import com.example.codexbridge.network.ChatMessageDto
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,11 +19,11 @@ data class AppUiState(
     val token: String? = null,
     val prompt: String = "",
     val cwd: String = "",
-    val tasks: List<TaskDto> = emptyList(),
-    val selectedTaskId: String? = null,
-    val logs: List<LogItem> = emptyList(),
-    val lastSeq: Int = 0,
+    val conversationId: String? = null,
+    val chatMessages: List<ChatMessageDto> = emptyList(),
+    val runningTaskId: String? = null,
     val loading: Boolean = false,
+    val sending: Boolean = false,
     val message: String = "",
 )
 
@@ -75,7 +74,7 @@ class AppViewModel : ViewModel() {
                     _uiState.update {
                         it.copy(
                             loading = false,
-                            message = "登录失败：${resp.code()}"
+                            message = "登录失败：${resp.code()}",
                         )
                     }
                     return@launch
@@ -89,7 +88,7 @@ class AppViewModel : ViewModel() {
                         message = "登录成功",
                     )
                 }
-                refreshTasks()
+                createNewConversationInternal(showMessage = false)
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(loading = false, message = "连接失败：${e.message}")
@@ -103,98 +102,113 @@ class AppViewModel : ViewModel() {
         _uiState.update {
             it.copy(
                 token = null,
-                tasks = emptyList(),
-                selectedTaskId = null,
-                logs = emptyList(),
-                lastSeq = 0,
+                conversationId = null,
+                chatMessages = emptyList(),
+                runningTaskId = null,
+                prompt = "",
                 message = "已退出",
             )
         }
     }
 
-    fun refreshTasks() {
+    fun createNewConversation() {
+        createNewConversationInternal(showMessage = true)
+    }
+
+    private fun createNewConversationInternal(showMessage: Boolean) {
         val token = uiState.value.token ?: return
+        pollJob?.cancel()
+
         viewModelScope.launch {
             try {
-                val resp = repository.listTasks(token)
-                if (!resp.isSuccessful) {
-                    _uiState.update { it.copy(message = "加载任务失败：${resp.code()}") }
+                val resp = repository.newChat(token)
+                if (!resp.isSuccessful || resp.body() == null) {
+                    _uiState.update { it.copy(message = "新建会话失败：${resp.code()}") }
                     return@launch
                 }
-                val tasks = resp.body()?.items.orEmpty()
-                _uiState.update { state ->
-                    val selectedId = state.selectedTaskId
-                    val keepSelected = tasks.any { it.id == selectedId }
-                    state.copy(
-                        tasks = tasks,
-                        selectedTaskId = if (keepSelected) selectedId else null,
-                        logs = if (keepSelected) state.logs else emptyList(),
-                        lastSeq = if (keepSelected) state.lastSeq else 0,
+
+                val conversationId = resp.body()!!.conversationId
+                _uiState.update {
+                    it.copy(
+                        conversationId = conversationId,
+                        chatMessages = emptyList(),
+                        runningTaskId = null,
+                        prompt = "",
+                        message = if (showMessage) "已创建新会话" else "",
                     )
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(message = "加载任务异常：${e.message}") }
+                _uiState.update { it.copy(message = "新建会话异常：${e.message}") }
             }
         }
     }
 
-    fun submitTask() {
+    fun sendMessage() {
         val token = uiState.value.token ?: return
         val prompt = uiState.value.prompt.trim()
         val cwd = uiState.value.cwd.trim()
+        val conversationId = uiState.value.conversationId
 
         if (prompt.isBlank()) {
-            _uiState.update { it.copy(message = "请先输入任务内容") }
+            _uiState.update { it.copy(message = "请先输入消息") }
             return
         }
 
         viewModelScope.launch {
-            _uiState.update { it.copy(loading = true) }
+            _uiState.update { it.copy(sending = true, message = "") }
             try {
-                val resp = repository.createTask(
+                val resp = repository.sendChatMessage(
                     token = token,
-                    prompt = prompt,
+                    message = prompt,
                     cwd = if (cwd.isBlank()) null else cwd,
+                    conversationId = conversationId,
                 )
-                if (!resp.isSuccessful || resp.body()?.task == null) {
+                if (!resp.isSuccessful || resp.body() == null) {
                     _uiState.update {
-                        it.copy(loading = false, message = "创建任务失败：${resp.code()}")
+                        it.copy(sending = false, message = "发送失败：${resp.code()}")
                     }
                     return@launch
                 }
 
-                val task = resp.body()!!.task
+                val body = resp.body()!!
                 _uiState.update {
                     it.copy(
-                        loading = false,
+                        sending = false,
                         prompt = "",
-                        selectedTaskId = task.id,
-                        logs = emptyList(),
-                        lastSeq = 0,
-                        message = "任务已提交",
+                        conversationId = body.conversationId,
+                        message = "已发送",
                     )
                 }
 
-                refreshTasks()
-                startLogPolling(task.id)
+                refreshChat(singleRun = true)
+                startChatPolling()
             } catch (e: Exception) {
                 _uiState.update {
-                    it.copy(loading = false, message = "提交异常：${e.message}")
+                    it.copy(sending = false, message = "发送异常：${e.message}")
                 }
             }
         }
     }
 
-    fun selectTask(taskId: String) {
-        _uiState.update {
-            it.copy(selectedTaskId = taskId, logs = emptyList(), lastSeq = 0)
+    fun refreshChat(singleRun: Boolean = true) {
+        val token = uiState.value.token ?: return
+        val conversationId = uiState.value.conversationId ?: return
+
+        viewModelScope.launch {
+            loadConversation(token, conversationId)
+
+            if (!singleRun) {
+                startChatPolling()
+            }
         }
-        startLogPolling(taskId)
     }
 
-    fun cancelSelectedTask() {
+    fun cancelRunningTask() {
         val token = uiState.value.token ?: return
-        val taskId = uiState.value.selectedTaskId ?: return
+        val taskId = uiState.value.runningTaskId ?: run {
+            _uiState.update { it.copy(message = "当前没有运行中的任务") }
+            return
+        }
 
         viewModelScope.launch {
             try {
@@ -204,48 +218,54 @@ class AppViewModel : ViewModel() {
                     return@launch
                 }
                 _uiState.update { it.copy(message = "已发送取消请求") }
-                refreshTasks()
+                refreshChat(singleRun = true)
             } catch (e: Exception) {
                 _uiState.update { it.copy(message = "取消异常：${e.message}") }
             }
         }
     }
 
-    fun refreshSelectedLogs() {
-        val taskId = uiState.value.selectedTaskId ?: return
-        startLogPolling(taskId, singleRun = true)
-    }
-
-    private fun startLogPolling(taskId: String, singleRun: Boolean = false) {
+    private fun startChatPolling() {
         val token = uiState.value.token ?: return
+        val conversationId = uiState.value.conversationId ?: return
 
         pollJob?.cancel()
         pollJob = viewModelScope.launch {
             do {
-                try {
-                    val after = uiState.value.lastSeq
-                    val resp = repository.getTaskLogs(token, taskId, after)
-                    if (resp.isSuccessful) {
-                        val body = resp.body()
-                        if (body != null) {
-                            _uiState.update { state ->
-                                state.copy(
-                                    logs = state.logs + body.logs,
-                                    lastSeq = body.latestSeq,
-                                )
-                            }
-                            refreshTasks()
-                            if (body.taskStatus !in listOf("queued", "running") && !singleRun) {
-                                break
-                            }
-                        }
-                    }
-                } catch (_: Exception) {
+                val stillRunning = loadConversation(token, conversationId)
+                if (!stillRunning) {
+                    break
                 }
-
-                if (singleRun) break
                 delay(1500)
             } while (isActive)
+        }
+    }
+
+    private suspend fun loadConversation(token: String, conversationId: String): Boolean {
+        return try {
+            val resp = repository.getChatMessages(token, conversationId)
+            if (!resp.isSuccessful || resp.body() == null) {
+                _uiState.update { it.copy(message = "拉取会话失败：${resp.code()}") }
+                return false
+            }
+
+            val body = resp.body()!!
+            val runningTaskId = body.messages
+                .lastOrNull { it.role == "assistant" && it.status in listOf("queued", "running") }
+                ?.taskId
+
+            _uiState.update {
+                it.copy(
+                    conversationId = body.conversationId,
+                    chatMessages = body.messages,
+                    runningTaskId = runningTaskId,
+                )
+            }
+
+            runningTaskId != null
+        } catch (e: Exception) {
+            _uiState.update { it.copy(message = "拉取会话异常：${e.message}") }
+            false
         }
     }
 }

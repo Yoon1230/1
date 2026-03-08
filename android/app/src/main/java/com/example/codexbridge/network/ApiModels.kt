@@ -15,6 +15,8 @@ data class TaskDto(
     @SerializedName("prompt") val prompt: String,
     @SerializedName("status") val status: String,
     @SerializedName("cwd") val cwd: String?,
+    @SerializedName("conversation_id") val conversationId: String?,
+    @SerializedName("session_id") val sessionId: String?,
     @SerializedName("created_at") val createdAt: String,
     @SerializedName("started_at") val startedAt: String?,
     @SerializedName("finished_at") val finishedAt: String?,
@@ -55,4 +57,35 @@ data class TaskLogsResponse(
 data class MessageResponse(
     @SerializedName("message") val message: String?,
     @SerializedName("error") val error: String?,
+)
+
+data class ChatNewResponse(
+    @SerializedName("conversation_id") val conversationId: String,
+)
+
+data class ChatSendRequest(
+    @SerializedName("message") val message: String,
+    @SerializedName("cwd") val cwd: String?,
+    @SerializedName("conversation_id") val conversationId: String?,
+)
+
+data class ChatSendResponse(
+    @SerializedName("conversation_id") val conversationId: String,
+    @SerializedName("task") val task: TaskDto,
+    @SerializedName("resumed_session_id") val resumedSessionId: String?,
+)
+
+data class ChatMessageDto(
+    @SerializedName("id") val id: String,
+    @SerializedName("role") val role: String,
+    @SerializedName("content") val content: String,
+    @SerializedName("status") val status: String,
+    @SerializedName("task_id") val taskId: String,
+    @SerializedName("created_at") val createdAt: String,
+    @SerializedName("session_id") val sessionId: String?,
+)
+
+data class ChatMessagesResponse(
+    @SerializedName("conversation_id") val conversationId: String,
+    @SerializedName("messages") val messages: List<ChatMessageDto>,
 )

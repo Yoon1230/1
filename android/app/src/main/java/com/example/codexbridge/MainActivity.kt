@@ -4,7 +4,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +19,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -35,7 +33,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.codexbridge.network.TaskDto
+import com.example.codexbridge.network.ChatMessageDto
+import com.example.codexbridge.ui.AppUiState
 import com.example.codexbridge.ui.AppViewModel
 
 
@@ -77,15 +76,14 @@ fun BridgeApp(vm: AppViewModel = viewModel()) {
                 onClearMessage = vm::clearMessage,
             )
         } else {
-            TaskPanel(
+            ChatPanel(
                 state = state,
                 onPromptChanged = vm::onPromptChanged,
                 onCwdChanged = vm::onCwdChanged,
-                onSubmitTask = vm::submitTask,
-                onRefreshTasks = vm::refreshTasks,
-                onSelectTask = vm::selectTask,
-                onRefreshLogs = vm::refreshSelectedLogs,
-                onCancelTask = vm::cancelSelectedTask,
+                onSend = vm::sendMessage,
+                onRefresh = { vm.refreshChat(singleRun = true) },
+                onNewChat = vm::createNewConversation,
+                onCancelTask = vm::cancelRunningTask,
                 onLogout = vm::logout,
                 onClearMessage = vm::clearMessage,
             )
@@ -144,14 +142,13 @@ private fun LoginPanel(
 
 
 @Composable
-private fun TaskPanel(
-    state: com.example.codexbridge.ui.AppUiState,
+private fun ChatPanel(
+    state: AppUiState,
     onPromptChanged: (String) -> Unit,
     onCwdChanged: (String) -> Unit,
-    onSubmitTask: () -> Unit,
-    onRefreshTasks: () -> Unit,
-    onSelectTask: (String) -> Unit,
-    onRefreshLogs: () -> Unit,
+    onSend: () -> Unit,
+    onRefresh: () -> Unit,
+    onNewChat: () -> Unit,
     onCancelTask: () -> Unit,
     onLogout: () -> Unit,
     onClearMessage: () -> Unit,
@@ -163,10 +160,48 @@ private fun TaskPanel(
     ) {
         Text("已连接", color = Color(0xFF1B5E20), fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = onRefreshTasks) { Text("刷新") }
+            TextButton(onClick = onNewChat) { Text("新会话") }
+            TextButton(onClick = onRefresh) { Text("刷新") }
             TextButton(onClick = onLogout) { Text("退出") }
         }
     }
+
+    if (!state.conversationId.isNullOrBlank()) {
+        Text(
+            text = "会话: ${state.conversationId.take(8)}",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color(0xFF546E7A),
+        )
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(420.dp)
+            .background(Color(0xFFF8FAFC), RoundedCornerShape(10.dp))
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (state.chatMessages.isEmpty()) {
+            item {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text("开始聊点什么吧", color = Color(0xFF8EA0B3))
+                }
+            }
+        } else {
+            items(state.chatMessages, key = { it.id }) { message ->
+                ChatBubble(message)
+            }
+        }
+    }
+
+    OutlinedTextField(
+        value = state.cwd,
+        onValueChange = onCwdChanged,
+        label = { Text("工作目录（可选）") },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+    )
 
     OutlinedTextField(
         value = state.prompt,
@@ -174,93 +209,80 @@ private fun TaskPanel(
             onPromptChanged(it)
             onClearMessage()
         },
-        label = { Text("让 Codex 执行什么任务") },
+        label = { Text("输入消息") },
         modifier = Modifier.fillMaxWidth(),
-        minLines = 3,
+        minLines = 2,
+        maxLines = 6,
     )
 
-    OutlinedTextField(
-        value = state.cwd,
-        onValueChange = onCwdChanged,
-        label = { Text("工作目录（可选）") },
+    Row(
         modifier = Modifier.fillMaxWidth(),
-    )
-
-    Button(onClick = onSubmitTask, modifier = Modifier.fillMaxWidth()) {
-        Text("提交任务")
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Button(
+            onClick = onSend,
+            modifier = Modifier,
+        ) {
+            if (state.sending) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = Color.White,
+                )
+            } else {
+                Text("发送")
+            }
+        }
+        Button(
+            onClick = onCancelTask,
+            modifier = Modifier,
+            enabled = state.runningTaskId != null,
+        ) {
+            Text("取消运行")
+        }
     }
 
     if (state.message.isNotBlank()) {
         Text(state.message, color = MaterialTheme.colorScheme.primary)
     }
-
-    HorizontalDivider()
-    Text("任务列表", style = MaterialTheme.typography.titleMedium)
-
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(220.dp)
-            .background(Color(0xFFF6F8FA), RoundedCornerShape(8.dp))
-            .padding(6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        items(state.tasks, key = { it.id }) { task ->
-            TaskItem(
-                task = task,
-                selected = task.id == state.selectedTaskId,
-                onClick = { onSelectTask(task.id) },
-            )
-        }
-    }
-
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = onRefreshLogs) { Text("刷新日志") }
-        Button(onClick = onCancelTask) { Text("取消任务") }
-    }
-
-    Text("日志", style = MaterialTheme.typography.titleMedium)
-
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(280.dp)
-            .background(Color(0xFF101418), RoundedCornerShape(8.dp))
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        items(state.logs, key = { "${it.taskId}-${it.seq}" }) { log ->
-            Text(
-                text = "[${log.seq}] ${log.line}",
-                color = Color(0xFFB8F7D4),
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        if (state.logs.isEmpty()) {
-            item {
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text("暂无日志", color = Color(0xFF8EA0B3))
-                }
-            }
-        }
-    }
 }
 
 
 @Composable
-private fun TaskItem(task: TaskDto, selected: Boolean, onClick: () -> Unit) {
-    val bg = if (selected) Color(0xFFE3F2FD) else Color.White
+private fun ChatBubble(message: ChatMessageDto) {
+    val isUser = message.role == "user"
+    val bubbleColor = if (isUser) Color(0xFFDFF3FF) else Color(0xFF101418)
+    val textColor = if (isUser) Color(0xFF0D1B2A) else Color(0xFFE4F8E7)
 
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(bg, RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
     ) {
-        Text(task.id.take(8) + "  " + task.status, fontWeight = FontWeight.Bold)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(if (isUser) 0.86f else 0.95f)
+                .background(bubbleColor, RoundedCornerShape(12.dp))
+                .padding(10.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = if (isUser) "你" else "Codex",
+                    color = if (isUser) Color(0xFF275B84) else Color(0xFF9FD7B8),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Text(
+                    text = message.content,
+                    color = textColor,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(2.dp))
-        Text(task.prompt.take(80), style = MaterialTheme.typography.bodySmall)
+        Text(
+            text = "${message.status} · ${message.taskId.take(8)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF8A9BA8),
+        )
     }
 }
-

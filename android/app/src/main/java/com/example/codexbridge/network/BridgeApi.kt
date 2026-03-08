@@ -45,4 +45,22 @@ interface BridgeApi {
         @Header("Authorization") authorization: String,
         @Path("taskId") taskId: String,
     ): Response<MessageResponse>
+
+    @POST("/api/chat/new")
+    suspend fun newChat(
+        @Header("Authorization") authorization: String,
+    ): Response<ChatNewResponse>
+
+    @POST("/api/chat/send")
+    suspend fun sendChatMessage(
+        @Header("Authorization") authorization: String,
+        @Body request: ChatSendRequest,
+    ): Response<ChatSendResponse>
+
+    @GET("/api/chat/messages")
+    suspend fun getChatMessages(
+        @Header("Authorization") authorization: String,
+        @Query("conversation_id") conversationId: String,
+        @Query("limit") limit: Int = 100,
+    ): Response<ChatMessagesResponse>
 }
